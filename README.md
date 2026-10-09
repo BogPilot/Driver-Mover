@@ -28,6 +28,8 @@ schemas are bundled). Location/GPS data in the logs is never read.
 
 ---
 
+> **Coming soon in v2:** the mannequin's hands will turn the steering wheel to match the steering angle recorded in your rlogs.
+
 ## Contents
 
 1. [Install](#1-install)
