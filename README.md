@@ -116,15 +116,24 @@ enter your GitHub username (the device then trusts the SSH keys on your GitHub a
 IP address under *Settings → Network → Advanced* (Wi-Fi) — below it is written as `<device-ip>`.
 Your computer and the device must be on the same network.
 
+The device only accepts **key-based logins**: there is no password, so SSH must use the private key that
+matches a public key on your GitHub account. Tell `ssh`/`scp` which key to use with `-i <path-to-private-key>`.
+On most computers that's `~/.ssh/id_ed25519` (or `~/.ssh/id_rsa`); the commands below store it in a `KEY`
+variable so you only set it once. If you don't have a key yet, create one with `ssh-keygen -t ed25519`,
+add the `.pub` file to GitHub (*Settings → SSH and GPG keys*), then re-enter your GitHub username on the device.
+
 Run these **on your own computer** (the device is the *source*, your computer is the *destination*):
 
 ```bash
+# path to the private key whose public half is on your GitHub account
+KEY=~/.ssh/id_ed25519
+
 # list the routes stored on the device (newest last)
-ssh comma@<device-ip> 'ls /data/media/0/realdata/'
+ssh -i "$KEY" comma@<device-ip> 'ls /data/media/0/realdata/'
 
 # copy every segment of one route into ~/rlogs/my_drive/
 mkdir -p ~/rlogs/my_drive
-scp -r 'comma@<device-ip>:/data/media/0/realdata/0000abcd--0123456789--*' ~/rlogs/my_drive/
+scp -i "$KEY" -r 'comma@<device-ip>:/data/media/0/realdata/0000abcd--0123456789--*' ~/rlogs/my_drive/
 ```
 
 Replace `0000abcd--0123456789` with the route name from the list. The device deletes old routes when its
@@ -132,9 +141,9 @@ storage fills up, so copy interesting drives soon. If you only want the logs (no
 copy just the rlog files:
 
 ```bash
-for d in $(ssh comma@<device-ip> 'ls -d /data/media/0/realdata/0000abcd--0123456789--*'); do
+for d in $(ssh -i "$KEY" comma@<device-ip> 'ls -d /data/media/0/realdata/0000abcd--0123456789--*'); do
   mkdir -p ~/rlogs/my_drive/$(basename $d)
-  scp "comma@<device-ip>:$d/rlog*" ~/rlogs/my_drive/$(basename $d)/
+  scp -i "$KEY" "comma@<device-ip>:$d/rlog*" ~/rlogs/my_drive/$(basename $d)/
 done
 ```
 
