@@ -1,0 +1,25 @@
+# build / env
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# outputs
+drivermover_out/
+dmoverlay_out/
+*.mp4
+!docs/*.mp4
+
+# never commit driving logs
+rlogs/
+rlog
+qlog
+*rlog*
+*qlog*
+*.zst
+*.bz2
+*.hevc
+*.ts

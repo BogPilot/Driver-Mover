@@ -1,0 +1,10 @@
+{
+  "_help": "Face anchor for the bundled mannequin photo (1152x1728). Values were tuned by hand for the proof-of-concept video.",
+  "face": {
+    "eye_mid": [808, 592],
+    "interocular_px": 56,
+    "apparent_yaw_deg": 12.0,
+    "apparent_pitch_deg": 0.0
+  },
+  "hud": {"speed_units": "mph", "vignette": true}
+}

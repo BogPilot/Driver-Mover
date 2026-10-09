@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drivermover"
+version = "1.0.0"
+description = "Driver-Mover: turn openpilot / BogPilot driver-monitoring logs into overlay videos"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+license = {text = "MIT"}
+dependencies = [
+  "numpy>=1.24,<3",
+  "opencv-python>=4.8,<5",
+  "pillow>=10,<13",
+  "pycapnp>=2.0,<3",
+  "zstandard>=0.21",
+  "mediapipe>=0.10.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/BogPilot/Driver-Mover"
+
+[project.scripts]
+drivermover = "drivermover.cli:main"
+dmoverlay = "drivermover.cli:main"   # alias
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+drivermover = ["schema/*.capnp", "schema/include/*.capnp", "schema/LICENSE", "fonts/*", "models/*", "examples/mannequin/*", "examples/mannequin/keyframes/*"]
