@@ -75,7 +75,14 @@ def cmd_render(args):
     wheel = False
   if wheel and not r.has_carcontrol:
     print("Note: no carControl messages - the wheel follows carState.steeringAngleDeg, everyone counts as the driver.", file=sys.stderr)
-  rd = Renderer(r, image, cfg, args.start, args.duration, head=head, wheel=wheel, warp_spokes=args.warp_spokes)
+  hands = None
+  if wheel and args.hands == "on" and not args.warp_spokes:
+    from .hands import assets_for
+    hands = assets_for(image)
+    if hands is None:
+      print("Note: no hands rig for this photo (see tools/build_hands.py) - the hands stay still, the wheel angle is shown "
+            "on the rim and in the panel.", file=sys.stderr)
+  rd = Renderer(r, image, cfg, args.start, args.duration, head=head, wheel=wheel, warp_spokes=args.warp_spokes, hands=hands)
   print(f"Rendering {rd.nf} frames ({args.duration:.0f} s at {FPS} fps) ...", file=sys.stderr)
   encode(rd, out, workers=args.workers)
   if not args.no_sheet:
@@ -169,7 +176,10 @@ def main(argv=None):
   q.add_argument("--workers", type=int, help="CPU processes (default: all cores)")
   q.add_argument("--no-sheet", action="store_true", help="skip the contact sheet / poster PNGs")
   q.add_argument("--no-wheel", action="store_true", help="don't show the steering wheel angle (rim indicator + panel)")
-  q.add_argument("--warp-spokes", action="store_true", help="experimental: also rotate the photo's spokes (can cut through hands)")
+  q.add_argument("--hands", choices=("on", "off"), default="on",
+                 help="on (default): the mannequin's hands grip and turn the wheel (push-pull), spokes turn; "
+                      "off: still photo with the angle shown on the rim")
+  q.add_argument("--warp-spokes", action="store_true", help="experimental, implies --hands off: rotate the photo's spokes in place (can cut through hands)")
   q.set_defaults(fn=cmd_render)
   q = sub.add_parser("calibrate", help="set / check the face anchor for a photo and write a preview PNG")
   q.add_argument("--image", required=True, help="your photo (or 'example')")

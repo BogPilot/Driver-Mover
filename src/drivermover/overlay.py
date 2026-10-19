@@ -92,7 +92,7 @@ FEATS = [_feat([(-46, -16, 4), (-32, -21, 0), (-18, -17, 0)]), _feat([(18, -17, 
 
 
 class Renderer:
-  def __init__(self, route, image_path, cfg, start, duration=15.0, head=None, subtle=False, wheel=False, warp_spokes=False):
+  def __init__(self, route, image_path, cfg, start, duration=15.0, head=None, subtle=False, wheel=False, warp_spokes=False, hands=None):
     self.r, self.cfg, self.start, self.end = route, cfg, float(start), float(start) + float(duration)
     self.nf = int(round(duration * FPS))
     self.photo = Image.open(image_path).convert("RGB")
@@ -120,7 +120,14 @@ class Renderer:
     self.wheel = None           # steering-wheel compositor (v2) or None
     if wheel:
       from .wheel import WheelCompositor
-      self.wheel = WheelCompositor(np.asarray(self.base), cfg, warp_spokes=warp_spokes)
+      self.wheel = WheelCompositor(np.asarray(self.base), cfg, warp_spokes=warp_spokes and not hands)
+    self.hands = None           # moving-hands rig (v2 --hands on) or None
+    if wheel and hands:
+      from .hands import HandRig
+      from .wheel import screen_angle
+      ts = np.arange(self.start - 8.0, self.end + 0.2, 0.01)
+      phi = [screen_angle(a, self.wheel.cw) for a in np.interp(ts, route.tcs, route.steer)] if route is not None else np.zeros(len(ts))
+      self.hands = HandRig(np.asarray(self.base), cfg, hands, vig=self.vig, plan_times=ts, plan_phi=phi)
     self.subtle = subtle or head is not None
 
   def proj(self, P, C):
@@ -331,6 +338,10 @@ class Renderer:
       bg, hp = self.head.frame(t, fi)
     else:
       bg, hp = self.base, {}
+    if self.hands is not None:
+      from .wheel import screen_angle
+      arr, hm = self.hands.apply(np.asarray(bg.convert("RGB")), t, screen_angle(st["st"], self.wheel.cw))
+      bg, hp = Image.fromarray(arr), dict(hp, hand_mask=hm)
     if self.wheel is not None:
       if self.wheel.warp_spokes:
         bg = Image.fromarray(self.wheel.apply(np.asarray(bg), st["st"]))

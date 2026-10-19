@@ -29,4 +29,4 @@ dmoverlay = "drivermover.cli:main"   # alias
 where = ["src"]
 
 [tool.setuptools.package-data]
-drivermover = ["schema/*.capnp", "schema/include/*.capnp", "schema/LICENSE", "fonts/*", "models/*", "examples/mannequin/*", "examples/mannequin/keyframes/*"]
+drivermover = ["schema/*.capnp", "schema/include/*.capnp", "schema/LICENSE", "fonts/*", "models/*", "examples/mannequin/*", "examples/mannequin/keyframes/*", "examples/mannequin/hands/*"]

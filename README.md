@@ -17,11 +17,12 @@ saw: head yaw/pitch/roll, face/eye/blink/phone scores, the awareness meter, the 
 * **Overlay mode** (default) – HUD + 3-D wireframe head on any photo.
 * **Realistic-head mode** (`--realhead`) – cross-dissolves between “keyframe” images of the same person in
   different head poses, so the person in the photo moves like the driver did. The head swap only touches the
-  head/neck area; hands, seatbelt and body stay pixel-for-pixel the original photo.
-* **Steering wheel angle** (v2, on by default) – an indicator ring on the photo's rim turns with the logged
-  steering angle (never drawn over the hands), with a small panel saying who is steering (openpilot / driver /
-  driver override) and a ghost tick for the angle openpilot commanded. `--no-wheel` turns it off;
-  `--warp-spokes` (experimental) also rotates the photo's spokes.
+  head/neck area; seatbelt and body stay pixel-for-pixel the original photo.
+* **Steering wheel** (v2, on by default) – the wheel turns with the logged steering angle (openpilot's and
+  yours) and, on the bundled mannequin, **the hands grip the rim and turn it**, shuffling push-pull style on
+  big turns (`--hands on`, the default). A tick on the rim marks the wheel's 12 o'clock, a small panel says who
+  is steering (openpilot / driver / driver override) and a ghost tick shows the angle openpilot commanded.
+  `--hands off` keeps the photo still and only shows the angle on the rim; `--no-wheel` turns it all off.
 * `find` – lists the most interesting moments in a drive automatically.
 
 Everything runs **locally on your computer, on the CPU**. No full openpilot checkout is needed (the log
@@ -32,8 +33,9 @@ schemas are bundled). Location/GPS data in the logs is never read.
 
 ---
 
-> **New in v2:** the steering angle recorded in your rlogs (openpilot's steering and yours) is shown on the
-> wheel: a tick on the rim turns with it and a panel shows who is steering (see §4).
+> **New in v2:** the steering angle recorded in your rlogs (openpilot's steering and yours) turns the wheel:
+> the mannequin's hands steer it push-pull style, a tick on the rim turns with it and a panel shows
+> who is steering (see §4).
 
 ## Contents
 
@@ -220,18 +222,32 @@ drivermover render ~/rlogs/my_drive --start 102 --duration 15 --realhead
   `drivermover_out/dm_my_drive_302s.mp4`, plus a `_contact.png` (6 stills) and `_poster.png`
   (skip them with `--no-sheet`). Realistic-head mode also writes a `_keyframes.png` sheet. Choose the
   file yourself with `--out ~/Videos/drive.mp4`.
-* Typical time for 15 s: overlay ≈25 s on 8 CPU cores (≈1 min on 4); realistic head ≈40 s (≈1.5–2 min).
-  `--workers 2` uses fewer cores.
+* Typical time for 15 s: overlay ≈25 s on 8 CPU cores (≈1 min on 4); realistic head ≈40 s (≈1.5–2 min);
+  the moving hands add ≈15 s. `--workers 2` uses fewer cores.
+* `--hands off` keeps the hands and wheel of the photo still (angle shown on the rim only); `--no-wheel`
+  leaves the steering wheel out entirely.
 * Videos are H.264 MP4, 30 fps, with container metadata stripped.
 
-How the steering-wheel indicator works (v2, both modes, `--no-wheel` to switch it off):
+How the steering wheel works (v2, both modes, `--no-wheel` to switch it off):
 
 * **Angle** – `carState.steeringAngleDeg`, the real wheel angle, so it includes your own steering. Multi-turn
   angles (e.g. −400° in a parking lot) are kept; frames between the 100 Hz samples are interpolated.
 * **Who is steering** – from `carControl.latActive` and `carState.steeringPressed` (held 0.3 s so it doesn't
   flicker): **OPENPILOT** (green) = openpilot is steering, **OVERRIDE** (amber) = openpilot is steering and
   the driver is pushing the wheel, **DRIVER** (grey) = openpilot isn't steering.
-* **On the photo** – the photo itself is not changed. A faint ring on the rim in the who-is-steering colour
+* **Moving hands (`--hands on`, default, bundled mannequin)** – the photo is split once into layers
+  (`tools/build_hands.py`, assets in `examples/mannequin/hands/`): a clean plate without arms or spokes
+  (LaMa-inpainted, hidden rim arcs re-painted from the visible rim), the spokes, and the two arms cut out of the
+  photo. Every frame they are stacked again: plate → arms (2-bone skinning: shoulder fixed, the elbow follows
+  the wrist a little, the forearm stretches) → spokes turned by the angle in the wheel's own plane → rim →
+  hands. Each hand is rigid, grips the rim and turns with it, tilting with the rim's tangent. Before a hand
+  leaves its comfortable range it lets go and slides back along the rim (≈0.3–0.5 s, lifted a little) while
+  the other hand keeps holding — **never both at once**; a hand that can't let go slips on the rim at its limit.
+  When the wheel rests the hands drift back to their photo grips one at a time. At angle 0 with both hands home
+  the frame is the original photo. Only the arm/wheel region (below the head zone) is touched, so the
+  realistic head composes unchanged. Your own photo needs its own rig (masks/skeleton in
+  `tools/build_hands.py`); without one the photo stays still and the angle is shown as below.
+* **On the photo (`--hands off`)** – the photo itself is not changed. A faint ring on the rim in the who-is-steering colour
   and a solid tick marking the wheel's 12 o'clock turn with the angle; the hands are masked out, so the tick
   passes *behind* them. While
   openpilot steers, a white outlined ghost tick shows `carControl.actuators.steeringAngleDeg` (the angle it
@@ -240,7 +256,7 @@ How the steering-wheel indicator works (v2, both modes, `--no-wheel` to switch i
 * **Direction** – the driver camera faces the driver, so it sees the wheel from behind: a left turn turns the
   wheel **clockwise in the photo**. (`wheel.positive_angle_is_clockwise_in_image` flips it if your photo is
   taken from the driver's side.)
-* **`--warp-spokes` (experimental, off by default)** – the rim outline is calibrated as an ellipse; the spokes are cut out in the wheel's own
+* **`--warp-spokes` (experimental, off by default, implies `--hands off`)** – the rim outline is calibrated as an ellipse; the spokes are cut out in the wheel's own
   plane (perspective undone, rotated, perspective redone) and turned. A spoke hidden in shadow is filled with
   a mirrored copy of a visible one; what a moved spoke uncovers is filled from the background next to it at the
   same distance from the hub. The rim is round, so it stays the original photo, and so do the hands (they
@@ -410,6 +426,7 @@ The anchoring offsets (face box, head crop, protected zone) were derived on the 
 | realistic head looks pasted or turns the wrong way | check the `_keyframes.png` sheet; remove bad keyframes |
 | “no steering-wheel calibration for this photo” | run `drivermover calibrate --image <photo> --auto` (or `--wheel-ellipse ...`) |
 | wheel turns the wrong way | flip `wheel.positive_angle_is_clockwise_in_image` in the photo's JSON |
+| hands look wrong on your own photo | `--hands off`, or build a rig for it: copy `tools/build_hands.py`, retrace the polygons/skeleton points |
 | wheel looks smeared / background moves with it | check the calibration preview: the cyan ellipse must sit on the rim; narrow `wheel.spokes` |
 | wireframe not on the face | re-run `drivermover calibrate` with `--eye-mid` / `--interocular` |
 
@@ -421,6 +438,7 @@ The anchoring offsets (face box, head crop, protected zone) were derived on the 
 Driver-Mover/
 ├── README.md  LICENSE  THIRD_PARTY_NOTICES.md  pyproject.toml
 ├── tests/                   pytest (python -m pytest tests; no rlogs needed)
+├── tools/build_hands.py     rebuilds examples/mannequin/hands/ (optional LaMa inpainting)
 ├── docs/example_mirror_checks.{mp4,gif}   the example above
 └── src/drivermover/
     ├── cli.py         `drivermover` command (find / render / calibrate)
@@ -432,10 +450,11 @@ Driver-Mover/
     ├── landmarks.py   MediaPipe face landmarks / head-angle measurement
     ├── realhead.py    keyframe alignment, mirroring, pose schedule, cross-dissolve, protected mask
     ├── wheel.py       steering wheel: rim ellipse, wheel-plane rotation, spokes, auto calibration
+    ├── hands.py       moving hands: layered plate/arms/spokes/hands, 2-bone skinning, push-pull grip planner
     ├── schema/        cereal log schemas (MIT, comma.ai — via BogPilot)
     ├── fonts/         Inter (SIL OFL 1.1)
     ├── models/        MediaPipe face landmarker (Apache-2.0)
-    └── examples/mannequin/  example photo, settings and keyframes
+    └── examples/mannequin/  example photo, settings, keyframes and hands/ (layers + rig for --hands)
 ```
 
 ---

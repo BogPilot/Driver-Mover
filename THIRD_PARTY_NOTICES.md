@@ -7,6 +7,7 @@
 | Inter typeface (Regular, Medium, SemiBold, Bold) by Rasmus Andersson | `src/drivermover/fonts/` | SIL Open Font License 1.1 — full text in `src/drivermover/fonts/OFL.txt` |
 | MediaPipe Face Landmarker model (`face_landmarker.task`) by Google | `src/drivermover/models/` | Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0 (model card: https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker) |
 | Example mannequin photo and keyframe head images | `src/drivermover/examples/mannequin/` | Provided by the project owner for this example; metadata stripped |
+| Hands layers derived from the example photo (`bg.png` clean plate inpainted offline with LaMa, Suvorov et al., via `simple-lama-inpainting`; the model is not bundled) | `src/drivermover/examples/mannequin/hands/` | Derived from the example photo; LaMa is Apache License 2.0 |
 
 Python dependencies (numpy, opencv-python, pillow, pycapnp, zstandard, mediapipe) are installed by pip
 from PyPI and keep their own licenses.
