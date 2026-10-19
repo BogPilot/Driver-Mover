@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .config import Geometry
-from .data import AWARE_PRE, AWARE_PROMPT, PITCH_TH, YAW_TH
+from .data import AWARE_PRE, AWARE_PROMPT, PITCH_TH, WHO_DRIVER, WHO_LABEL, WHO_OPENPILOT, WHO_OVERRIDE, YAW_TH
 
 FONT_DIR = Path(__file__).parent / "fonts"
 SS = 2          # supersampling for smooth lines
@@ -19,6 +19,8 @@ FPS = 30
 REF_W, REF_H = 1152, 1728   # HUD layout reference (2:3 portrait)
 GREEN = (51, 209, 122); AMBER = (255, 176, 32); ORANGE = (218, 111, 37); RED = (230, 60, 60); WHITE = (255, 255, 255)
 CYAN = (80, 200, 255); VIOLET = (190, 140, 255)
+SLATE = (185, 195, 210)
+WHO_COLOR = {WHO_OPENPILOT: GREEN, WHO_OVERRIDE: AMBER, WHO_DRIVER: SLATE}
 
 
 class T:
@@ -54,6 +56,10 @@ def rrect(dr, tr, box, r, **kw):
   dr.rounded_rectangle([tr.x(box[0]), tr.y(box[1]), tr.x(box[2]), tr.y(box[3])], radius=int(tr.s(r)), **kw)
 def ellipse(dr, tr, cx, cy, rx, ry, **kw):
   dr.ellipse([tr.x(cx) - tr.s(rx), tr.y(cy) - tr.s(ry), tr.x(cx) + tr.s(rx), tr.y(cy) + tr.s(ry)], **kw)
+def deg(v):
+  """Signed whole degrees without a '-0'."""
+  r = int(round(v))
+  return f"{r:+d}\u00b0" if r else "0\u00b0"
 def mix(c1, c2, f): return tuple(int(c1[i] + (c2[i] - c1[i]) * f) for i in range(3))
 
 
@@ -86,7 +92,7 @@ FEATS = [_feat([(-46, -16, 4), (-32, -21, 0), (-18, -17, 0)]), _feat([(18, -17, 
 
 
 class Renderer:
-  def __init__(self, route, image_path, cfg, start, duration=15.0, head=None, subtle=False):
+  def __init__(self, route, image_path, cfg, start, duration=15.0, head=None, subtle=False, wheel=False):
     self.r, self.cfg, self.start, self.end = route, cfg, float(start), float(start) + float(duration)
     self.nf = int(round(duration * FPS))
     self.photo = Image.open(image_path).convert("RGB")
@@ -111,6 +117,10 @@ class Renderer:
     self.fonts = Fonts(u)
     self.ffonts = Fonts(self.g.k)
     self.head = head            # realistic-head compositor (or None)
+    self.wheel = None           # steering-wheel compositor (v2) or None
+    if wheel:
+      from .wheel import WheelCompositor
+      self.wheel = WheelCompositor(np.asarray(self.base), cfg)
     self.subtle = subtle or head is not None
 
   def proj(self, P, C):
@@ -258,6 +268,54 @@ class Renderer:
         text(dr, tr, (1100, yy + 38), u, F["xs"], WHITE, 150, "rm")
       yy += 88
 
+  # ------------------------------------------------------------------ steering wheel (v2)
+  def _rim_band(self, q, half, r0, r1, n=6):
+    from .wheel import rim_point
+    w = self.wheel
+    outer = [tuple(rim_point(w.c, w.A, q + d, r1)) for d in np.linspace(-half, half, n)]
+    inner = [tuple(rim_point(w.c, w.A, q + d, r0)) for d in np.linspace(half, -half, n)]
+    return outer + inner
+
+  def draw_wheel_ticks(self, dr, st):
+    """Tick on the photo's rim at the wheel's 12 o'clock (rotates with the logged angle) and, while openpilot is
+    steering, a ghost tick where openpilot commanded the wheel to be."""
+    from .wheel import screen_angle
+    tr, w = self.face, self.wheel
+    if st.get("lat"):
+      qc = screen_angle(st["st_cmd"], w.cw)
+      dr.polygon([tr.p(p) for p in self._rim_band(qc, 3.0, 0.76, 1.07)], fill=(255, 255, 255, 40), outline=(255, 255, 255, 200),
+                 width=max(1, int(tr.s(1.6))))
+    q = screen_angle(st["st"], w.cw); col = WHO_COLOR[st["who"]]
+    dr.polygon([tr.p(p) for p in self._rim_band(q, 2.6, 0.79, 1.02)], fill=col + (215,), outline=(10, 10, 12, 160), width=max(1, int(tr.s(1))))
+
+  def draw_wheel_panel(self, dr, st):
+    tr, F = self.hud, self.fonts
+    col = WHO_COLOR[st["who"]]
+    panel(dr, tr, (676, 1238, 1120, 1352), r=22)
+    # mini wheel as the DRIVER sees it: + angle (left) turns it counter-clockwise
+    cx, cy, R = 734, 1295, 40
+    ellipse(dr, tr, cx, cy, R, R, outline=col + (235,), width=max(1, int(tr.s(7))))
+    ellipse(dr, tr, cx, cy, 10, 10, fill=col + (200,))
+    a = -math.radians(st["st"])           # screen angle of the driver's-view 12 o'clock, clockwise-positive
+    pt = lambda ang, r: (cx + r * math.sin(ang), cy - r * math.cos(ang))
+    for sp in (math.pi / 2, -math.pi / 2, math.pi):
+      line(dr, tr, [pt(a + sp, 10), pt(a + sp, R - 3)], col, 220, 5)
+    line(dr, tr, [pt(a, R - 9), pt(a, R + 9)], WHITE, 255, 5)
+    if st.get("lat"):
+      ac = -math.radians(st["st_cmd"])
+      line(dr, tr, [pt(ac, R - 11), pt(ac, R + 11)], WHITE, 150, 2.5)
+    text(dr, tr, (796, 1262), "STEERING WHEEL", F["lab"], WHITE, 170, "lm")
+    text(dr, tr, (796, 1306), deg(st["st"]), F["num"], WHITE, 255, "lm")
+    turns = abs(st["st"]) / 360.0
+    sub = ("left" if st["st"] > 0.5 else "right" if st["st"] < -0.5 else "centre") + (f" \u00b7 {turns:.1f} turns" if turns >= 0.95 else "")
+    text(dr, tr, (796, 1336), sub, F["xs"], WHITE, 150, "lm")
+    lab = WHO_LABEL[st["who"]]
+    rrect(dr, tr, (946, 1250, 1104, 1280), 15, fill=col + (60,), outline=col + (255,), width=max(1, int(tr.s(2))))
+    text(dr, tr, (1025, 1265), lab if len(lab) < 12 else "OVERRIDE", F["lab"], col, 255, "mm")
+    if st.get("lat"):
+      text(dr, tr, (1104, 1306), f"op cmd {deg(st['st_cmd'])}", F["xs"], WHITE, 200, "rm")
+    text(dr, tr, (1104, 1332), "driver steering" if st["who"] != WHO_OPENPILOT else "openpilot steering", F["xs"], WHITE, 130, "rm")
+
   def frame(self, fi):
     t = self.start + fi / FPS
     st = self.r.state(t, self.mph)
@@ -265,10 +323,16 @@ class Renderer:
       bg, hp = self.head.frame(t, fi)
     else:
       bg, hp = self.base, {}
+    if self.wheel is not None:
+      bg = Image.fromarray(self.wheel.apply(np.asarray(bg), st["st"]))
     ov = Image.new("RGBA", (self.W * SS, self.H * SS), (0, 0, 0, 0))
     dr = ImageDraw.Draw(ov, "RGBA")
+    if self.wheel is not None:
+      self.draw_wheel_ticks(dr, st)
     self.draw_face(dr, st, hp)
     self.draw_hud(dr, st, t)
+    if self.wheel is not None:
+      self.draw_wheel_panel(dr, st)
     ov = ov.resize((self.W, self.H), Image.LANCZOS)
     im = bg.convert("RGBA"); im.alpha_composite(ov)
     return np.asarray(im.convert("RGB"))
@@ -294,6 +358,35 @@ def preview(image_path, cfg, out_path):
                                ((255, 80, 200), "pink outline = head/neck zone realistic-head mode may change"),
                                ((255, 255, 0), "thin yellow box = head crop used for keyframe heads")]):
     text(dr, T(max(0.6, rd.W / REF_W)), (20, 20 + 26 * i), t_, f["sm"], c, 255, "la")
+  notes = [((255, 255, 0), "yellow cross = eye_mid, circles = eye centres (interocular_px apart)"),
+           ((51, 209, 122), "green brackets/wireframe = face box and head model at apparent_yaw/pitch"),
+           ((255, 80, 200), "pink outline = head/neck zone realistic-head mode may change"),
+           ((255, 255, 0), "thin yellow box = head crop used for keyframe heads")]
+  if cfg.get("wheel", {}).get("ellipse"):
+    import cv2
+    from .wheel import WheelCompositor, rim_point
+    wc = WheelCompositor(np.asarray(rd.photo), cfg)
+    for rr, c_ in ((1.0, CYAN), (cfg["wheel"]["rim_inner"], CYAN), (cfg["wheel"]["hub_radius"], (120, 160, 255))):
+      pts = [rim_point(wc.c, wc.A, a, rr) for a in range(0, 361, 4)]
+      line(dr, tr, pts, c_, 230, 2)
+    line(dr, tr, [tuple(rim_point(wc.c, wc.A, 0, 0.75)), tuple(rim_point(wc.c, wc.A, 0, 1.08))], (255, 255, 255), 255, 3)
+    X0, Y0, X1, Y1 = wc.roi
+    a0 = wc._warp(wc.alpha, 0.0)
+    cs_, _ = cv2.findContours((a0 > 0.5).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in cs_:
+      pts = [(float(p[0][0] + X0), float(p[0][1] + Y0)) for p in cnt] + [(float(cnt[0][0][0] + X0), float(cnt[0][0][1] + Y0))]
+      line(dr, tr, pts, (255, 150, 40), 230, 1.5)
+    hm = (wc.hand[..., 0] > 0.5).astype(np.uint8)
+    cs_, _ = cv2.findContours(hm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in cs_:
+      pts = [(float(p[0][0]), float(p[0][1])) for p in cnt] + [(float(cnt[0][0][0]), float(cnt[0][0][1]))]
+      line(dr, tr, pts, (255, 80, 200), 200, 1.2)
+    notes += [(CYAN, "cyan = steering-wheel rim outline (outer edge) and rim inner edge; white tick = wheel 12 o'clock"),
+              ((255, 150, 40), "orange = spokes that turn with the steering angle"),
+              ((255, 80, 200), "pink blobs on the wheel = hands, kept in front of the wheel")]
+  f = Fonts(max(0.6, rd.W / REF_W))
+  for i, (c, t_) in enumerate(notes[4:]):
+    text(dr, T(max(0.6, rd.W / REF_W)), (20, 20 + 26 * (i + 4)), t_, f["sm"], c, 255, "la")
   ov = ov.resize((rd.W, rd.H), Image.LANCZOS)
   im = rd.photo.convert("RGBA"); im.alpha_composite(ov); im.convert("RGB").save(out_path)
   return out_path

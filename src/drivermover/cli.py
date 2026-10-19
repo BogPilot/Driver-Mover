@@ -47,7 +47,7 @@ def cmd_render(args):
     print(f"Warning: the route only has {r.duration:.0f} s of data", file=sys.stderr)
   image = Path(args.image) if args.image not in (None, "example") else EXAMPLE_DIR / "photo.jpg"
   cfg = C.load(args.config, image)
-  out = Path(args.out) if args.out else Path("drivermover_out") / f"dm_{Path(args.route[0]).resolve().name}_{args.start:.0f}s{'_realhead' if args.realhead else ''}.mp4"
+  out = Path(args.out) if args.out else Path("drivermover_out") / f"dm_{Path(args.route[0]).resolve().name}_{args.start:.0f}s{'_realhead' if args.realhead else ''}{'' if args.no_wheel else '_wheel'}.mp4"
   head = None
   if args.realhead:
     from PIL import Image
@@ -68,7 +68,14 @@ def cmd_render(args):
     print(f"  keyframe sheet: {sheet}", file=sys.stderr)
     rd0 = Renderer(r, image, cfg, args.start, args.duration)
     head = HeadCompositor(kfs, r, args.start, args.duration, photo, FPS, vignette=rd0.vig)
-  rd = Renderer(r, image, cfg, args.start, args.duration, head=head)
+  wheel = not args.no_wheel
+  if wheel and not cfg["wheel"].get("ellipse"):
+    print("Note: no steering-wheel calibration for this photo, rendering without the turning wheel. "
+          "Run `drivermover calibrate --image <photo> --auto` to add it (or pass --no-wheel to silence this).", file=sys.stderr)
+    wheel = False
+  if wheel and not r.has_carcontrol:
+    print("Note: no carControl messages - the wheel follows carState.steeringAngleDeg, everyone counts as the driver.", file=sys.stderr)
+  rd = Renderer(r, image, cfg, args.start, args.duration, head=head, wheel=wheel)
   print(f"Rendering {rd.nf} frames ({args.duration:.0f} s at {FPS} fps) ...", file=sys.stderr)
   encode(rd, out, workers=args.workers)
   if not args.no_sheet:
@@ -119,10 +126,18 @@ def cmd_calibrate(args):
       cfg["face"]["interocular_px"] = round(float(np.hypot(*(e[1] - e[0]))), 1)
       cfg["face"]["apparent_yaw_deg"] = round(lm["yaw"], 1)
       print(f"Found face: eye_mid {cfg['face']['eye_mid']}, interocular {cfg['face']['interocular_px']} px, head yaw {lm['yaw']:+.1f} deg", file=sys.stderr)
+  if args.wheel_ellipse:
+    cfg["wheel"]["ellipse"] = [round(float(v), 1) for v in args.wheel_ellipse]
+  elif (args.auto or not cfg["wheel"].get("ellipse")) and cfg["face"].get("eye_mid") and not args.no_wheel:
+    import cv2
+    from .wheel import find_wheel
+    e, sc = find_wheel(cv2.imread(str(image)), cfg)
+    cfg["wheel"]["ellipse"] = e
+    print(f"Found steering wheel rim: centre ({e[0]}, {e[1]}), {e[2]} x {e[3]} px, tilted {e[4]} deg (edge score {sc:.1f}) - check the preview", file=sys.stderr)
   for k, v in (("eye_mid", args.eye_mid), ("interocular_px", args.interocular), ("apparent_yaw_deg", args.yaw), ("apparent_pitch_deg", args.pitch)):
     if v is not None:
       cfg["face"][k] = v
-  if args.config or args.auto or args.eye_mid or args.interocular or args.yaw is not None or args.pitch is not None or not cfg_path.exists():
+  if args.config or args.auto or args.eye_mid or args.interocular or args.wheel_ellipse or args.yaw is not None or args.pitch is not None or not cfg_path.exists():
     if image.parent == EXAMPLE_DIR and not args.config:
       print("(not overwriting the bundled example settings; pass --config my.json to save)", file=sys.stderr)
     else:
@@ -153,6 +168,7 @@ def main(argv=None):
   q.add_argument("--keyframes", help="folder of keyframe images (default with the example photo: bundled keyframes)")
   q.add_argument("--workers", type=int, help="CPU processes (default: all cores)")
   q.add_argument("--no-sheet", action="store_true", help="skip the contact sheet / poster PNGs")
+  q.add_argument("--no-wheel", action="store_true", help="don't turn the steering wheel with the logged steering angle")
   q.set_defaults(fn=cmd_render)
   q = sub.add_parser("calibrate", help="set / check the face anchor for a photo and write a preview PNG")
   q.add_argument("--image", required=True, help="your photo (or 'example')")
@@ -162,6 +178,9 @@ def main(argv=None):
   q.add_argument("--interocular", type=float, metavar="PX")
   q.add_argument("--yaw", type=float, help="how far the photo's head is already turned (+ = toward image-right)")
   q.add_argument("--pitch", type=float)
+  q.add_argument("--wheel-ellipse", type=float, nargs=5, metavar=("CX", "CY", "W", "H", "ANGLE"),
+                 help="steering-wheel rim outline by hand (OpenCV ellipse: centre, full width/height, angle in deg)")
+  q.add_argument("--no-wheel", action="store_true", help="don't look for the steering wheel")
   q.add_argument("--preview", help="preview PNG path")
   q.set_defaults(fn=cmd_calibrate)
   args = p.parse_args(argv)

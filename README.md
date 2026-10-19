@@ -16,8 +16,11 @@ saw: head yaw/pitch/roll, face/eye/blink/phone scores, the awareness meter, the 
 
 * **Overlay mode** (default) – HUD + 3-D wireframe head on any photo.
 * **Realistic-head mode** (`--realhead`) – cross-dissolves between “keyframe” images of the same person in
-  different head poses, so the person in the photo moves like the driver did. Only the head/neck area ever
-  changes; the steering wheel, hands and seatbelt stay pixel-for-pixel the original photo.
+  different head poses, so the person in the photo moves like the driver did. The head swap only touches the
+  head/neck area; hands, seatbelt and body stay pixel-for-pixel the original photo.
+* **Turning steering wheel** (v2, on by default) – the photo's wheel turns with the logged steering angle,
+  with a small panel saying who is steering (openpilot / driver / driver override) and a ghost tick for the
+  angle openpilot commanded. `--no-wheel` turns it off.
 * `find` – lists the most interesting moments in a drive automatically.
 
 Everything runs **locally on your computer, on the CPU**. No full openpilot checkout is needed (the log
@@ -28,7 +31,8 @@ schemas are bundled). Location/GPS data in the logs is never read.
 
 ---
 
-> **Coming soon in v2:** the mannequin's hands will turn the steering wheel to match the steering angle recorded in your rlogs.
+> **New in v2:** the steering wheel turns to match the steering angle recorded in your rlogs (openpilot's
+> steering and yours). The hands stay where they are in the photo; the rim slides under them (see §4).
 
 ## Contents
 
@@ -219,6 +223,27 @@ drivermover render ~/rlogs/my_drive --start 102 --duration 15 --realhead
   `--workers 2` uses fewer cores.
 * Videos are H.264 MP4, 30 fps, with container metadata stripped.
 
+How the turning steering wheel works (v2, both modes, `--no-wheel` to switch it off):
+
+* **Angle** – `carState.steeringAngleDeg`, the real wheel angle, so it includes your own steering. Multi-turn
+  angles (e.g. −400° in a parking lot) are kept; frames between the 100 Hz samples are interpolated.
+* **Who is steering** – from `carControl.latActive` and `carState.steeringPressed` (held 0.3 s so it doesn't
+  flicker): **OPENPILOT** (green) = openpilot is steering, **OVERRIDE** (amber) = openpilot is steering and
+  the driver is pushing the wheel, **DRIVER** (grey) = openpilot isn't steering.
+* **On the photo** – a coloured tick on the rim marks the wheel's 12 o'clock and turns with it; while
+  openpilot steers, a white outlined ghost tick shows `carControl.actuators.steeringAngleDeg` (the angle it
+  asked for). The panel at the bottom right shows the angle, left/right, turns, and a small wheel drawn **as
+  the driver sees it** (a left turn turns it counter-clockwise).
+* **Direction** – the driver camera faces the driver, so it sees the wheel from behind: a left turn turns the
+  wheel **clockwise in the photo**. (`wheel.positive_angle_is_clockwise_in_image` flips it if your photo is
+  taken from the driver's side.)
+* **What moves** – the rim outline is calibrated as an ellipse; the spokes are cut out in the wheel's own
+  plane (perspective undone, rotated, perspective redone) and turned. A spoke hidden in shadow is filled with
+  a mirrored copy of a visible one; what a moved spoke uncovers is filled from the background next to it at the
+  same distance from the hub. The rim is round, so it stays the original photo, and so do the hands (they
+  stay in front of the wheel, pixel-for-pixel) and everything outside the rim — the realistic head is not
+  affected. The hands do **not** follow the wheel: realistic hand motion isn't possible from one photo.
+
 How realistic-head mode works:
 
 1. **Align** – each keyframe is matched to the photo by background/body features (SIFT + RANSAC) so its
@@ -255,7 +280,19 @@ How realistic-head mode works:
    * `--interocular PX` – distance between eye centres (scales everything)
    * `--yaw DEG` – how far the photo's head is already turned (+ = toward image-right); wireframe only
 
-3. Render: `drivermover render ~/rlogs/my_drive --image ~/Pictures/driver.jpg` (the `.json` beside the photo
+3. **Steering wheel**: `--auto` also looks for the wheel rim near where it sits relative to the face in the
+   mannequin photo. In the preview the **cyan** ellipse should follow the rim's outer edge, the orange outlines
+   are the spokes that will turn and the pink blobs are hands kept in front. If it's off, set the rim by hand
+   (centre x y, full width, full height, tilt in degrees — the OpenCV ellipse convention):
+
+   ```bash
+   drivermover calibrate --image ~/Pictures/driver.jpg --wheel-ellipse 977 953 331 508 46.5
+   ```
+
+   Spoke positions (`wheel.spokes`, clock angles as the camera sees the wheel) can be edited in the JSON.
+   Without a wheel calibration the video is rendered without the turning wheel.
+
+4. Render: `drivermover render ~/rlogs/my_drive --image ~/Pictures/driver.jpg` (the `.json` beside the photo
    is loaded automatically, or pass `--config file.json`).
 
 The HUD layout is designed for portrait photos (like the 1152×1728 example); other sizes work, centred.
@@ -315,6 +352,14 @@ keys fall back to the defaults below.
 | `realhead.down_keyframe_pitch_deg` | 5 | keyframes pitched down more than this are “head-down” |
 | `realhead.head_down_start_deg` / `head_down_full_deg` | 8 / 22 | data pitch where head-down keyframes fade in / are full |
 | `realhead.micro_shift_px` / `micro_roll_deg` | 4 / 2 | max rigid shift / roll between keyframes |
+| `wheel.ellipse` | – | rim outline `[cx, cy, width, height, angle_deg]` (written by `calibrate`) |
+| `wheel.up_dir` | `[0, -1]` | image direction of the wheel's 12 o'clock from its centre |
+| `wheel.positive_angle_is_clockwise_in_image` | true | + steering angle (left) turns the photo's wheel clockwise (camera faces the driver) |
+| `wheel.rim_inner` / `hub_radius` | 0.80 / 0.40 | rim inner edge and static hub, as a fraction of the rim radius |
+| `wheel.spokes` | `[[270, 20], [190, 30]]` | spokes that turn: `[clock angle, half-width]` in degrees as the camera sees the wheel (driver's 3 o'clock = 270) |
+| `wheel.mirror_spokes` | `[[270, 90]]` | spokes hidden in shadow, filled with a mirrored copy: `[visible, hidden]` |
+| `wheel.gap_quantile` | 0.75 | inside a spoke wedge, pixels brighter than this quantile are see-through gaps and stay put |
+| `wheel.hand_threshold` / `hand_min_area` | 55 / 400 | brightness / size of the hands kept in front of the wheel |
 | `realhead.allow_polygon_rel` | (mannequin) | protected head/neck zone as offsets from `eye_mid` in reference pixels — edit if the pink outline in the calibration preview touches the wheel or hands |
 
 The anchoring offsets (face box, head crop, protected zone) were derived on the mannequin photo (eye_mid
@@ -326,7 +371,8 @@ The anchoring offsets (face box, head crop, protected zone) were derived on the 
 
 * **Messages used**: `driverStateV2` (net face orientation/position, face/eye/blink/sunglasses/phone
   probabilities), `driverMonitoringState` (events, awareness, distracted flags), `controlsState` (alert text),
-  `carState` (speed, steering angle), `liveCalibration` (device mount angles). Nothing else is read.
+  `carState` (speed, steering angle, steering pressed/torque), `carControl` (openpilot steering active and its
+  commanded wheel angle), `liveCalibration` (device mount angles). Nothing else is read.
 * **Head angles** follow openpilot's `face_orientation_from_net`: the net's angles are corrected for where
   the face sits in the 1928×1208 driver-camera image (focal length 598 px) and for the device mount
   (`liveCalibration.rpyCalib`, per sample). + yaw = driver's right.
@@ -359,6 +405,9 @@ The anchoring offsets (face box, head crop, protected zone) were derived on the 
 | many `W0000 …` / `INFO: Created TensorFlow Lite …` lines | harmless MediaPipe messages |
 | realistic head: “skipping …: too few matching features” | regenerate that keyframe closer to the original framing |
 | realistic head looks pasted or turns the wrong way | check the `_keyframes.png` sheet; remove bad keyframes |
+| “no steering-wheel calibration for this photo” | run `drivermover calibrate --image <photo> --auto` (or `--wheel-ellipse ...`) |
+| wheel turns the wrong way | flip `wheel.positive_angle_is_clockwise_in_image` in the photo's JSON |
+| wheel looks smeared / background moves with it | check the calibration preview: the cyan ellipse must sit on the rim; narrow `wheel.spokes` |
 | wireframe not on the face | re-run `drivermover calibrate` with `--eye-mid` / `--interocular` |
 
 ---
@@ -368,6 +417,7 @@ The anchoring offsets (face box, head crop, protected zone) were derived on the 
 ```
 Driver-Mover/
 ├── README.md  LICENSE  THIRD_PARTY_NOTICES.md  pyproject.toml
+├── tests/                   pytest (python -m pytest tests; no rlogs needed)
 ├── docs/example_mirror_checks.{mp4,gif}   the example above
 └── src/drivermover/
     ├── cli.py         `drivermover` command (find / render / calibrate)
@@ -378,6 +428,7 @@ Driver-Mover/
     ├── overlay.py     HUD + wireframe drawing, ffmpeg encoding
     ├── landmarks.py   MediaPipe face landmarks / head-angle measurement
     ├── realhead.py    keyframe alignment, mirroring, pose schedule, cross-dissolve, protected mask
+    ├── wheel.py       steering wheel: rim ellipse, wheel-plane rotation, spokes, auto calibration
     ├── schema/        cereal log schemas (MIT, comma.ai — via BogPilot)
     ├── fonts/         Inter (SIL OFL 1.1)
     ├── models/        MediaPipe face landmarker (Apache-2.0)

@@ -25,6 +25,21 @@ DEFAULTS = {
     "allow_polygon_rel": [[-168, -162], [97, -162], [97, 8], [44, 98], [30, 108], [24, 146], [-80, 146],
                           [-86, 108], [-148, 98], [-168, 48]],
     "_allow_help": "Head/neck area that may change, as offsets from eye_mid in 'reference pixels' (scaled by interocular_px/56). Everything outside stays the original photo."
+  },
+  "wheel": {
+    "_help": "Steering wheel that turns with the logged steering angle. ellipse = rim outline [cx, cy, width, height, angle_deg] (OpenCV fitEllipse convention), set by `calibrate --auto`. Clock angles are degrees clockwise from 12 o'clock as the CAMERA sees the wheel (it faces the driver, so the driver's 3 o'clock is at 270).",
+    "ellipse": None,
+    "up_dir": [0.0, -1.0],
+    "positive_angle_is_clockwise_in_image": True,
+    "rim_inner": 0.80,
+    "hub_radius": 0.40,
+    "spokes": [[270.0, 20.0], [190.0, 30.0]],
+    "mirror_spokes": [[270.0, 90.0]],
+    "gap_quantile": 0.75,
+    "hand_threshold": 55,
+    "hand_min_area": 400,
+    "ellipse_rel": [168.8, 361.2, 331.2, 507.6, 46.5],
+    "_rel_help": "Where calibrate --auto starts looking: the mannequin photo's wheel relative to eye_mid in reference pixels (scaled by interocular_px/56)."
   }
 }
 
@@ -51,7 +66,7 @@ def save(cfg, path):
   clean = {k: v for k, v in cfg.items() if not k.startswith("_path")}
   text = json.dumps(clean, indent=2)
   # keep short number lists ([x, y] pairs) on one line so the file stays readable
-  text = re.sub(r"\[\s*(-?[\d.]+),\s*(-?[\d.]+)\s*\]", r"[\1, \2]", text)
+  text = re.sub(r"\[(\s*-?[\d.]+(?:,\s*-?[\d.]+)*\s*)\]", lambda m: "[" + ", ".join(v.strip() for v in m.group(1).split(",")) + "]", text)
   Path(path).write_text(text + "\n")
 
 

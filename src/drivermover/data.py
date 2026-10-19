@@ -18,7 +18,57 @@ AWARE_PRE, AWARE_PROMPT = 8 / 11, 6 / 11
 # face_orientation_from_net: model output refers to the undistorted 1928x1208 driver image, EFL 598 px
 CAM_W, CAM_H, EFL = 1928, 1208, 598.0
 
-WANTED = {"driverStateV2", "driverMonitoringState", "controlsState", "selfdriveState", "carState", "liveCalibration"}
+WANTED = {"driverStateV2", "driverMonitoringState", "controlsState", "selfdriveState", "carState", "carControl", "liveCalibration"}
+
+# who is steering (per carState sample)
+WHO_DRIVER, WHO_OPENPILOT, WHO_OVERRIDE = 0, 1, 2
+WHO_LABEL = {WHO_DRIVER: "DRIVER", WHO_OPENPILOT: "OPENPILOT", WHO_OVERRIDE: "DRIVER OVERRIDE"}
+PRESSED_HOLD_S = 0.3     # steeringPressed flickers at the torque threshold; hold it this long
+
+
+def unwrap_angle(deg, jump=180.0):
+  """Steering angles are continuous multi-turn values (e.g. -406 deg). If a log ever wraps them into +-180 / 0..360,
+  undo it: a real wheel cannot move more than `jump` degrees between two 100 Hz samples."""
+  a = np.asarray(deg, float)
+  if a.size < 2:
+    return a.copy()
+  d = np.diff(a)
+  fix = np.where(d > jump, -360.0, np.where(d < -jump, 360.0, 0.0))
+  return np.r_[a[0], a[0] + np.cumsum(d + fix)]
+
+
+def hold_flags(ts, flags, hold_s=PRESSED_HOLD_S):
+  """Keep a boolean on for `hold_s` seconds after each True sample (debounce)."""
+  ts = np.asarray(ts, float); f = np.asarray(flags, bool)
+  if not f.any():
+    return f.copy()
+  last = np.where(f, ts, -np.inf)
+  last = np.maximum.accumulate(last)
+  return (ts - last) <= hold_s
+
+
+def classify_steering(lat_active, pressed):
+  """openpilot steering (lateral control active, driver not pushing), driver override (lat active and the driver is
+  applying torque), or driver (lat not active). Vectorised."""
+  lat = np.asarray(lat_active, bool); pr = np.asarray(pressed, bool)
+  return np.where(lat, np.where(pr, WHO_OVERRIDE, WHO_OPENPILOT), WHO_DRIVER).astype(int)
+
+
+def align_prev(t_src, values, t_dst, default=0.0):
+  """Most recent value of a step signal (sampled at t_src) at each t_dst."""
+  t_src = np.asarray(t_src, float); v = np.asarray(values)
+  if t_src.size == 0:
+    return np.full(np.shape(t_dst), default, dtype=float)
+  i = np.searchsorted(t_src, t_dst, "right") - 1
+  out = v[np.clip(i, 0, len(v) - 1)]
+  return np.where(i >= 0, out, default)
+
+
+def steering_at(t, tcs, angle, cmd, lat, who):
+  """Wheel state at time t (video frames fall between 100 Hz samples): angle/command interpolated, flags from the
+  latest sample."""
+  i = max(0, int(np.searchsorted(tcs, t, "right")) - 1)
+  return dict(st=float(np.interp(t, tcs, angle)), st_cmd=float(np.interp(t, tcs, cmd)), lat=bool(lat[i]), who=int(who[i]))
 
 
 def _g(obj, name, default=0.0):
@@ -31,7 +81,7 @@ def _g(obj, name, default=0.0):
 class Route:
   def __init__(self, paths, schema_dir=None, verbose=True):
     self.files = find_segments(paths)
-    ds, dm, cs, ctl, sds, cal, seg_t = [], [], [], [], [], [], []
+    ds, dm, cs, cc, ctl, sds, cal, seg_t = [], [], [], [], [], [], [], []
     for f in self.files:
       first = None
       for w, e in iter_events(f, schema_dir, WANTED):
@@ -53,7 +103,10 @@ class Route:
           (ctl if w == "controlsState" else sds).append(row)
         elif w == "carState":
           c = e.carState
-          cs.append((t, c.vEgo, c.steeringAngleDeg))
+          cs.append((t, c.vEgo, c.steeringAngleDeg, bool(_g(c, "steeringPressed", False)), float(_g(c, "steeringTorque", 0.0))))
+        elif w == "carControl":
+          c = e.carControl
+          cc.append((t, bool(_g(c, "enabled", False)), bool(_g(c, "latActive", False)), float(_g(c.actuators, "steeringAngleDeg", 0.0))))
         elif w == "liveCalibration":
           r = list(e.liveCalibration.rpyCalib)
           if len(r) == 3:
@@ -63,7 +116,7 @@ class Route:
         print(f"  read {f.parent.name}/{f.name}: {len(ds)} driver-state msgs so far", file=sys.stderr)
     if not ds or not dm:
       raise RuntimeError("no driverStateV2 / driverMonitoringState messages found (is driver monitoring logged in these rlogs?)")
-    ds.sort(key=lambda r: r[0]); dm.sort(key=lambda r: r[0]); cs.sort(key=lambda r: r[0]); cal.sort(key=lambda r: r[0])
+    ds.sort(key=lambda r: r[0]); dm.sort(key=lambda r: r[0]); cs.sort(key=lambda r: r[0]); cc.sort(key=lambda r: r[0]); cal.sort(key=lambda r: r[0])
     if any(r[1] for r in sds):     # newer openpilot: alerts live in selfdriveState
       ctl = sds
     ctl.sort(key=lambda r: r[0])
@@ -110,7 +163,17 @@ class Route:
     # --- car / alerts
     self.tcs = np.array([r[0] - t0 for r in cs]) if cs else np.array([0.0])
     self.v = np.array([r[1] for r in cs]) if cs else np.zeros(1)
-    self.steer = np.array([r[2] for r in cs]) if cs else np.zeros(1)
+    self.steer = unwrap_angle([r[2] for r in cs]) if cs else np.zeros(1)
+    self.steer_pressed_raw = np.array([r[3] for r in cs], bool) if cs else np.zeros(1, bool)
+    self.steer_torque = np.array([r[4] for r in cs]) if cs else np.zeros(1)
+    self.steer_pressed = hold_flags(self.tcs, self.steer_pressed_raw)
+    self.has_carcontrol = bool(cc)
+    tcc = np.array([r[0] - t0 for r in cc]) if cc else np.zeros(0)
+    self.lat_active = align_prev(tcc, np.array([r[2] for r in cc], bool), self.tcs, False).astype(bool) if cc else np.zeros(len(self.tcs), bool)
+    self.cc_enabled = align_prev(tcc, np.array([r[1] for r in cc], bool), self.tcs, False).astype(bool) if cc else np.zeros(len(self.tcs), bool)
+    # openpilot's commanded wheel angle (AP1 is angle control); only meaningful while lat is active
+    self.steer_cmd = np.interp(self.tcs, tcc, unwrap_angle([r[3] for r in cc])) if cc else self.steer.copy()
+    self.steer_who = classify_steering(self.lat_active, self.steer_pressed)
     self.tct = np.array([r[0] - t0 for r in ctl]) if ctl else np.array([0.0])
     self.alerts = [(r[1], r[2], r[3]) for r in ctl] if ctl else [("", "", "normal")]
     self.duration = float(max(self.tds[-1], self.tdm[-1]))
@@ -148,7 +211,8 @@ class Route:
                 le=lerp(self.lEye, self.tds), re=lerp(self.rEye, self.tds), lb=lerp(self.lBl, self.tds), rb=lerp(self.rBl, self.tds),
                 sun=lerp(self.sun, self.tds), ph=lerp(self.phone, self.tds), aw=float(aw), dist=bool(self.isd[i]),
                 dt=int(self.dtype[i]), fdet=bool(self.facedet[i]), a1=a1, a2=a2, ast=ast,
-                v=lerp(self.v, self.tcs) * (2.23694 if mph else 3.6), st=lerp(self.steer, self.tcs))
+                v=lerp(self.v, self.tcs) * (2.23694 if mph else 3.6),
+                **steering_at(t, self.tcs, self.steer, self.steer_cmd, self.lat_active, self.steer_who))
 
   def alert_strength(self, t, kind):
     vals = []
