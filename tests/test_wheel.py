@@ -46,7 +46,7 @@ def test_left_turn_is_clockwise_in_camera_view():
 def comp():
   cfg = C.load(None, PHOTO)
   im = np.asarray(Image.open(PHOTO).convert("RGB"))
-  return im, WheelCompositor(im, cfg)
+  return im, WheelCompositor(im, cfg, warp_spokes=True)
 
 
 def test_bundled_example_has_wheel_calibration():
@@ -90,3 +90,13 @@ def test_auto_calibration_finds_example_wheel():
   assert abs(e[0] - ELL[0]) < 15 and abs(e[1] - ELL[1]) < 15
   assert abs(e[2] - ELL[2]) < 0.08 * ELL[2] and abs(e[3] - ELL[3]) < 0.08 * ELL[3]
   assert abs(e[4] - ELL[4]) < 6 and score > 5
+
+
+def test_default_leaves_photo_untouched():
+  cfg = C.load(None, PHOTO)
+  im = np.asarray(Image.open(PHOTO).convert("RGB"))
+  w = WheelCompositor(im, cfg)
+  assert not w.warp_spokes
+  for ang in (0.0, 45.0, -271.9):
+    assert np.array_equal(w.apply(im, ang), im)
+  assert w.hand_overlay.max() > 0.99 and w.hand_overlay.mean() < 0.2

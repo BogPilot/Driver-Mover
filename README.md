@@ -18,9 +18,10 @@ saw: head yaw/pitch/roll, face/eye/blink/phone scores, the awareness meter, the 
 * **Realistic-head mode** (`--realhead`) – cross-dissolves between “keyframe” images of the same person in
   different head poses, so the person in the photo moves like the driver did. The head swap only touches the
   head/neck area; hands, seatbelt and body stay pixel-for-pixel the original photo.
-* **Turning steering wheel** (v2, on by default) – the photo's wheel turns with the logged steering angle,
-  with a small panel saying who is steering (openpilot / driver / driver override) and a ghost tick for the
-  angle openpilot commanded. `--no-wheel` turns it off.
+* **Steering wheel angle** (v2, on by default) – an indicator ring on the photo's rim turns with the logged
+  steering angle (never drawn over the hands), with a small panel saying who is steering (openpilot / driver /
+  driver override) and a ghost tick for the angle openpilot commanded. `--no-wheel` turns it off;
+  `--warp-spokes` (experimental) also rotates the photo's spokes.
 * `find` – lists the most interesting moments in a drive automatically.
 
 Everything runs **locally on your computer, on the CPU**. No full openpilot checkout is needed (the log
@@ -31,8 +32,8 @@ schemas are bundled). Location/GPS data in the logs is never read.
 
 ---
 
-> **New in v2:** the steering wheel turns to match the steering angle recorded in your rlogs (openpilot's
-> steering and yours). The hands stay where they are in the photo; the rim slides under them (see §4).
+> **New in v2:** the steering angle recorded in your rlogs (openpilot's steering and yours) is shown on the
+> wheel: a tick on the rim turns with it and a panel shows who is steering (see §4).
 
 ## Contents
 
@@ -223,26 +224,28 @@ drivermover render ~/rlogs/my_drive --start 102 --duration 15 --realhead
   `--workers 2` uses fewer cores.
 * Videos are H.264 MP4, 30 fps, with container metadata stripped.
 
-How the turning steering wheel works (v2, both modes, `--no-wheel` to switch it off):
+How the steering-wheel indicator works (v2, both modes, `--no-wheel` to switch it off):
 
 * **Angle** – `carState.steeringAngleDeg`, the real wheel angle, so it includes your own steering. Multi-turn
   angles (e.g. −400° in a parking lot) are kept; frames between the 100 Hz samples are interpolated.
 * **Who is steering** – from `carControl.latActive` and `carState.steeringPressed` (held 0.3 s so it doesn't
   flicker): **OPENPILOT** (green) = openpilot is steering, **OVERRIDE** (amber) = openpilot is steering and
   the driver is pushing the wheel, **DRIVER** (grey) = openpilot isn't steering.
-* **On the photo** – a coloured tick on the rim marks the wheel's 12 o'clock and turns with it; while
+* **On the photo** – the photo itself is not changed. A faint ring on the rim in the who-is-steering colour
+  and a solid tick marking the wheel's 12 o'clock turn with the angle; the hands are masked out, so the tick
+  passes *behind* them. While
   openpilot steers, a white outlined ghost tick shows `carControl.actuators.steeringAngleDeg` (the angle it
   asked for). The panel at the bottom right shows the angle, left/right, turns, and a small wheel drawn **as
   the driver sees it** (a left turn turns it counter-clockwise).
 * **Direction** – the driver camera faces the driver, so it sees the wheel from behind: a left turn turns the
   wheel **clockwise in the photo**. (`wheel.positive_angle_is_clockwise_in_image` flips it if your photo is
   taken from the driver's side.)
-* **What moves** – the rim outline is calibrated as an ellipse; the spokes are cut out in the wheel's own
+* **`--warp-spokes` (experimental, off by default)** – the rim outline is calibrated as an ellipse; the spokes are cut out in the wheel's own
   plane (perspective undone, rotated, perspective redone) and turned. A spoke hidden in shadow is filled with
   a mirrored copy of a visible one; what a moved spoke uncovers is filled from the background next to it at the
   same distance from the hub. The rim is round, so it stays the original photo, and so do the hands (they
   stay in front of the wheel, pixel-for-pixel) and everything outside the rim — the realistic head is not
-  affected. The hands do **not** follow the wheel: realistic hand motion isn't possible from one photo.
+  affected. On the bundled mannequin this can cut through the hands and smear the rim, which is why it is off.
 
 How realistic-head mode works:
 

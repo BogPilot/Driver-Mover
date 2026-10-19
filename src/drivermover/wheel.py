@@ -4,7 +4,11 @@ The photo's wheel is treated as a flat disc seen in perspective. Its outline is 
 anchor); an affine map takes the unit circle in the wheel's own plane ("frontal" view, as the camera sees it) onto
 that ellipse, so a rotation in the wheel's plane becomes `H . Rot(q) . H^-1` in the photo.
 
-What moves and what doesn't:
+By default (since the v2 review) the photo is NOT changed: the wheel's angle is shown as an indicator ring on the
+rim (hands masked out) plus the panel. `--warp-spokes` (experimental) turns on the pixel spoke rotation below; it
+can cut through the hands and smear the rim on photos like the mannequin, so it is off by default.
+
+What moves and what doesn't (--warp-spokes):
   * hub + spokes rotate: they are cut out of the photo in the frontal view (hub disc + spoke wedges, minus see-through
     gaps that are clearly brighter), a hidden spoke can be filled with a mirrored copy of a visible one, and the
     pixels they uncover are inpainted once (clean plate)
@@ -132,7 +136,7 @@ def find_wheel(img_bgr, cfg, seed=0):
 class WheelCompositor:
   """Per-frame: rotate the photo's hub+spokes by the logged steering angle (see module doc)."""
 
-  def __init__(self, base_rgb, cfg, ss=1.0):
+  def __init__(self, base_rgb, cfg, ss=1.0, warp_spokes=False):
     wc = cfg["wheel"]
     if not wc.get("ellipse"):
       raise ValueError("wheel.ellipse is not set - run `drivermover calibrate --image <photo> --auto` (or use --no-wheel)")
@@ -166,6 +170,11 @@ class WheelCompositor:
     hm = cv2.dilate(hm, np.ones((5, 5), np.uint8))
     hb = cv2.GaussianBlur(hm.astype(np.float32), (0, 0), 1.2)
     self.hand = np.where(hb > 0.98, 1.0, hb).astype(np.float32)[..., None]   # hand cores stay exactly the photo
+    # overlay mask: the rim indicator is never drawn over the hands/arms (a bit wider than the hand cores)
+    self.hand_overlay = cv2.GaussianBlur(cv2.dilate(hm, np.ones((9, 9), np.uint8)).astype(np.float32), (0, 0), 1.5)
+    self.warp_spokes = bool(warp_spokes)
+    if not self.warp_spokes:        # default: the photo is not changed at all, only the overlay indicator is drawn
+      return
     hand_f = warp_in(hm.astype(np.float32), cv2.INTER_LINEAR) > 0.2
     # moving parts in the frontal view
     gf = cv2.GaussianBlur(cv2.cvtColor(np.clip(F, 0, 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32), (0, 0), 2.0)
@@ -255,6 +264,8 @@ class WheelCompositor:
     """frame_rgb: HxWx3 uint8/float (photo, possibly with the realistic head). Returns uint8 array."""
     q = screen_angle(angle_deg, self.cw)
     out = np.array(frame_rgb, dtype=np.uint8, copy=True)
+    if not self.warp_spokes:
+      return out
     X0, Y0, X1, Y1 = self.roi
     a = self._warp(self.alpha, q)[..., None]
     L = self._warp(self.layer, q, cv2.INTER_CUBIC)

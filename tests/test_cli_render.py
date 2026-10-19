@@ -51,3 +51,13 @@ def test_render_frame_with_wheel(who, ang, cmd, lat):
   d = np.any(with_w != without, axis=2)
   assert d[1180:1400, 650:1130].any()                      # HUD wheel panel drawn
   assert not d[:440, :].any()                               # top of the frame (HUD bar, head) identical
+  rd = Renderer(r, EXAMPLE_DIR / "photo.jpg", cfg, 5.0, 1.0, wheel=True)
+  hands = rd.wheel.hand_overlay > 0.999
+  assert not d[hands].any()                                 # the rim indicator never crosses the hands
+  assert d[700:1200, 780:1152].any()                        # ... but is drawn on the rim
+
+
+def test_cli_has_warp_spokes_flag(capsys):
+  with pytest.raises(SystemExit):
+    cli.main(["render", "--help"])
+  assert "--warp-spokes" in capsys.readouterr().out

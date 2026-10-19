@@ -92,7 +92,7 @@ FEATS = [_feat([(-46, -16, 4), (-32, -21, 0), (-18, -17, 0)]), _feat([(18, -17, 
 
 
 class Renderer:
-  def __init__(self, route, image_path, cfg, start, duration=15.0, head=None, subtle=False, wheel=False):
+  def __init__(self, route, image_path, cfg, start, duration=15.0, head=None, subtle=False, wheel=False, warp_spokes=False):
     self.r, self.cfg, self.start, self.end = route, cfg, float(start), float(start) + float(duration)
     self.nf = int(round(duration * FPS))
     self.photo = Image.open(image_path).convert("RGB")
@@ -120,7 +120,7 @@ class Renderer:
     self.wheel = None           # steering-wheel compositor (v2) or None
     if wheel:
       from .wheel import WheelCompositor
-      self.wheel = WheelCompositor(np.asarray(self.base), cfg)
+      self.wheel = WheelCompositor(np.asarray(self.base), cfg, warp_spokes=warp_spokes)
     self.subtle = subtle or head is not None
 
   def proj(self, P, C):
@@ -277,16 +277,24 @@ class Renderer:
     return outer + inner
 
   def draw_wheel_ticks(self, dr, st):
-    """Tick on the photo's rim at the wheel's 12 o'clock (rotates with the logged angle) and, while openpilot is
-    steering, a ghost tick where openpilot commanded the wheel to be."""
-    from .wheel import screen_angle
+    """Indicator ON the photo's rim: a faint ring in the who-is-steering colour, a solid arc at the wheel's
+    12 o'clock (turns with the logged angle) and, while openpilot steers, a white outlined ghost arc at the angle
+    openpilot commanded. Drawn on its own layer; the hands are masked out of it in frame()."""
+    from .wheel import rim_point, screen_angle
     tr, w = self.face, self.wheel
+    col = WHO_COLOR[st["who"]]
+    ring = [tuple(rim_point(w.c, w.A, a, 0.90)) for a in np.arange(0, 361, 3)]
+    line(dr, tr, ring, col, 70, 3.0)
     if st.get("lat"):
       qc = screen_angle(st["st_cmd"], w.cw)
-      dr.polygon([tr.p(p) for p in self._rim_band(qc, 3.0, 0.76, 1.07)], fill=(255, 255, 255, 40), outline=(255, 255, 255, 200),
-                 width=max(1, int(tr.s(1.6))))
-    q = screen_angle(st["st"], w.cw); col = WHO_COLOR[st["who"]]
-    dr.polygon([tr.p(p) for p in self._rim_band(q, 2.6, 0.79, 1.02)], fill=col + (215,), outline=(10, 10, 12, 160), width=max(1, int(tr.s(1))))
+      dr.polygon([tr.p(p) for p in self._rim_band(qc, 5.0, 0.80, 1.0, 10)], fill=(255, 255, 255, 45), outline=(255, 255, 255, 215),
+                 width=max(1, int(tr.s(1.8))))
+    q = screen_angle(st["st"], w.cw)
+    dr.polygon([tr.p(p) for p in self._rim_band(q, 3.5, 0.83, 0.97, 8)], fill=col + (235,), outline=(10, 10, 12, 140), width=max(1, int(tr.s(1))))
+
+  def wheel_hand_mask(self, hp):
+    """Hands/arms that the rim indicator must not cross (per frame if the hands move with the wheel)."""
+    return hp.get("hand_mask", self.wheel.hand_overlay)
 
   def draw_wheel_panel(self, dr, st):
     tr, F = self.hud, self.fonts
@@ -324,11 +332,16 @@ class Renderer:
     else:
       bg, hp = self.base, {}
     if self.wheel is not None:
-      bg = Image.fromarray(self.wheel.apply(np.asarray(bg), st["st"]))
+      if self.wheel.warp_spokes:
+        bg = Image.fromarray(self.wheel.apply(np.asarray(bg), st["st"]))
+      wl = Image.new("RGBA", (self.W * SS, self.H * SS), (0, 0, 0, 0))
+      self.draw_wheel_ticks(ImageDraw.Draw(wl, "RGBA"), st)
+      wl = np.asarray(wl.resize((self.W, self.H), Image.LANCZOS)).astype(np.float32)
+      hm = self.wheel_hand_mask(hp)
+      wl[..., 3] *= (1.0 - hm)
+      bg = bg.convert("RGBA"); bg.alpha_composite(Image.fromarray(wl.astype(np.uint8)))
     ov = Image.new("RGBA", (self.W * SS, self.H * SS), (0, 0, 0, 0))
     dr = ImageDraw.Draw(ov, "RGBA")
-    if self.wheel is not None:
-      self.draw_wheel_ticks(dr, st)
     self.draw_face(dr, st, hp)
     self.draw_hud(dr, st, t)
     if self.wheel is not None:

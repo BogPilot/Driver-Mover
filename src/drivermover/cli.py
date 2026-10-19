@@ -75,7 +75,7 @@ def cmd_render(args):
     wheel = False
   if wheel and not r.has_carcontrol:
     print("Note: no carControl messages - the wheel follows carState.steeringAngleDeg, everyone counts as the driver.", file=sys.stderr)
-  rd = Renderer(r, image, cfg, args.start, args.duration, head=head, wheel=wheel)
+  rd = Renderer(r, image, cfg, args.start, args.duration, head=head, wheel=wheel, warp_spokes=args.warp_spokes)
   print(f"Rendering {rd.nf} frames ({args.duration:.0f} s at {FPS} fps) ...", file=sys.stderr)
   encode(rd, out, workers=args.workers)
   if not args.no_sheet:
@@ -168,7 +168,8 @@ def main(argv=None):
   q.add_argument("--keyframes", help="folder of keyframe images (default with the example photo: bundled keyframes)")
   q.add_argument("--workers", type=int, help="CPU processes (default: all cores)")
   q.add_argument("--no-sheet", action="store_true", help="skip the contact sheet / poster PNGs")
-  q.add_argument("--no-wheel", action="store_true", help="don't turn the steering wheel with the logged steering angle")
+  q.add_argument("--no-wheel", action="store_true", help="don't show the steering wheel angle (rim indicator + panel)")
+  q.add_argument("--warp-spokes", action="store_true", help="experimental: also rotate the photo's spokes (can cut through hands)")
   q.set_defaults(fn=cmd_render)
   q = sub.add_parser("calibrate", help="set / check the face anchor for a photo and write a preview PNG")
   q.add_argument("--image", required=True, help="your photo (or 'example')")
