@@ -4,10 +4,12 @@
 3-D head model drawn on a photo, or a photo whose head actually turns the way the driver's did.
 
 <p align="center">
-  <a href="docs/example_mirror_checks.mp4"><img src="docs/example_mirror_checks.gif" width="360" alt="Driver-Mover example: driver glances left, right and left again before a turn"></a><br>
-  <sub><b>Example</b> — 15 s at an intersection: a glance left (~−26°), a big look right (~+54°), left again, then the right turn.
-  No alerts; awareness stays at 100 %. Rendered with <code>--realhead</code> on the bundled mannequin photo.
-  <a href="docs/example_mirror_checks.mp4">Full-quality MP4</a>.</sub>
+  <a href="docs/example_hands_override.mp4"><img src="docs/example_hands_override.gif" width="360" alt="Driver-Mover v2 example: openpilot steers, the driver briefly overrides and the mannequin's hands turn the wheel"></a><br>
+  <sub><b>Example (v2)</b> — 15 s, attentive driver: openpilot steers, then the driver grabs the wheel and turns it right
+  (~39°, ~2.4 s; the panel shows <b>OVERRIDE</b>) before openpilot takes back over and recentres it. The mannequin's
+  hands follow the wheel push-pull style. No alerts; awareness stays at 100 %. Rendered with
+  <code>--hands on</code> (the default) on the bundled mannequin photo. <a href="docs/example_hands_override.mp4">Full-quality MP4</a> ·
+  <a href="docs/example_mirror_checks.mp4">v1 mirror-check example</a>.</sub>
 </p>
 
 Driver-Mover reads the **rlogs** your comma device records and shows what the driver-monitoring (DM) system
@@ -439,7 +441,8 @@ Driver-Mover/
 ├── README.md  LICENSE  THIRD_PARTY_NOTICES.md  pyproject.toml
 ├── tests/                   pytest (python -m pytest tests; no rlogs needed)
 ├── tools/build_hands.py     rebuilds examples/mannequin/hands/ (optional LaMa inpainting)
-├── docs/example_mirror_checks.{mp4,gif}   the example above
+├── docs/example_hands_override.{mp4,gif}  the v2 example above
+├── docs/example_mirror_checks.{mp4,gif}   the v1 (head-only) example
 └── src/drivermover/
     ├── cli.py         `drivermover` command (find / render / calibrate)
     ├── logreader.py   finds segments, decompresses .zst/.bz2, reads with the bundled schemas
