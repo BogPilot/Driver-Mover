@@ -1,0 +1,11 @@
+Stock openpilot cereal from tag v0.11.0. Backward-compatible with rlogs from
+0.9.8, 0.9.9 and all 0.10.x through 0.11.0: selfdriveState is @130,
+driverMonitoringState is still @71, DriverStateV2 gained phoneProb at 0.10.2
+(@13). events on DriverMonitoringState moved to @18 in 0.9.8 (the 0.9.7
+@0 list is eventsDEPRECATED here).
+
+NOT LOADED at runtime. At openpilot v0.11.0, cereal/car.capnp is a symlink
+into the opendbc submodule (the extracted file is only a path stub). pycapnp
+cannot compile it. Driver-Mover reads 0.9.8–0.11.0 rlogs with the
+stock_v111plus pack instead, which keeps selfdriveState at @130 and exposes
+the older DriverMonitoringState as driverMonitoringStateDEPRECATED @71.

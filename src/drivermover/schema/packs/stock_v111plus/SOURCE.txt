@@ -1,0 +1,13 @@
+Stock openpilot cereal from tag v0.11.2, which is also the current release
+(and the DriverMonitoringState / DriverStateV2 structs on commaai/openpilot
+master as of 2026-11-17 match this tag).
+
+driverMonitoringState moved to @151 in 0.11.1 and the payload was rewritten;
+the 0.9.7–0.11.0 message is driverMonitoringStateDEPRECATED at @71.
+selfdriveState stays at @130. liveCalibration was renamed extrinsicsCalibration
+(@19) in 0.11.2. driverCameraState was renamed cabinCameraState (@70).
+
+car.capnp is no longer in the openpilot tree in this generation. The copy
+here is from commaai/opendbc commit b3bd79a659dae961af169a3baac723961f720133,
+the opendbc_repo pin recorded on openpilot v0.11.2.
+log.capnp imports "/car.capnp" and "/include/c++.capnp".

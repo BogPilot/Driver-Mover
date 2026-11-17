@@ -162,7 +162,7 @@ def main(argv=None):
   def route_args(q):
     q.add_argument("route", nargs="+", help="route folder (with <route>--N segment folders) or rlog / rlog.zst / rlog.bz2 files")
     q.add_argument("--duration", type=float, default=15.0, help="window length in seconds (default 15)")
-    q.add_argument("--schema-dir", help="use another fork's cereal folder instead of the bundled BogPilot schema")
+    q.add_argument("--schema-dir", help="use this cereal folder instead of auto-detecting a schema pack from the rlog version (0.9.7 through current)")
   q = sub.add_parser("find", help="list the most interesting driver-monitoring moments"); route_args(q)
   q.add_argument("--top", type=int, default=5)
   q.set_defaults(fn=cmd_find)

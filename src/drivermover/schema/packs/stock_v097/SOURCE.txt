@@ -1,0 +1,3 @@
+Stock openpilot cereal from tag v0.9.7 (cereal/ in the openpilot tree).
+Used to read 0.9.7 rlogs. Event union still has driverMonitoringState at @71
+and no selfdriveState. car.capnp lives in cereal in this generation.
