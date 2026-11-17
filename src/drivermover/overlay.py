@@ -2,9 +2,11 @@
 import math
 import multiprocessing as mp
 import os
+import pickle
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -420,6 +422,30 @@ _R = None
 def _work(fi): return _R.frame(fi)
 
 
+def _worker_context():
+  # fork() after OpenCV/MediaPipe have been imported deadlocks the pool on macOS
+  # (workers sit at 0 CPU). spawn starts a fresh interpreter; Linux keeps fork.
+  return mp.get_context("spawn" if sys.platform == "darwin" else "fork")
+
+
+def _init_worker(payload_path):
+  """Runs in each spawn worker. Import OpenCV / MediaPipe here; load the pickled renderer once."""
+  global _R
+  os.environ.setdefault("MPLBACKEND", "Agg")
+  os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+  os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+  try:
+    import cv2  # noqa: F401
+  except ImportError:
+    pass
+  try:
+    import mediapipe  # noqa: F401
+  except ImportError:
+    pass
+  with open(payload_path, "rb") as f:
+    _R = pickle.load(f)
+
+
 def encode(renderer, out_path, workers=None, crf=19, progress=True):
   global _R
   if shutil.which("ffmpeg") is None:
@@ -429,13 +455,36 @@ def encode(renderer, out_path, workers=None, crf=19, progress=True):
   ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{renderer.W}x{renderer.H}",
                          "-r", str(FPS), "-i", "-", "-vf", f"crop={W}:{H}:0:0", "-c:v", "libx264", "-preset", "slow", "-crf", str(crf),
                          "-pix_fmt", "yuv420p", "-map_metadata", "-1", "-fflags", "+bitexact", "-movflags", "+faststart", str(out_path)], stdin=subprocess.PIPE)
-  _R = renderer
-  ctx = mp.get_context("fork")
-  with ctx.Pool(workers or os.cpu_count()) as pool:
-    for i, fr in enumerate(pool.imap(_work, range(renderer.nf), chunksize=4)):
-      ff.stdin.write(fr.tobytes())
-      if progress and (i % 30 == 0 or i == renderer.nf - 1):
-        print(f"\r  rendering frame {i + 1}/{renderer.nf}", end="", file=sys.stderr, flush=True)
+  n = os.cpu_count() if workers is None else workers
+  try:
+    from .landmarks import close as _close_landmarks
+    _close_landmarks()
+  except Exception:
+    pass
+  ctx = _worker_context()
+  payload_path = None
+  pool_kw = {}
+  if ctx.get_start_method() == "spawn":
+    fd, payload_path = tempfile.mkstemp(prefix="dmoverlay_renderer_", suffix=".pkl")
+    os.close(fd)
+    with open(payload_path, "wb") as f:
+      pickle.dump(renderer, f, protocol=pickle.HIGHEST_PROTOCOL)
+    pool_kw["initializer"] = _init_worker
+    pool_kw["initargs"] = (payload_path,)
+  else:
+    _R = renderer
+  try:
+    with ctx.Pool(n, **pool_kw) as pool:
+      for i, fr in enumerate(pool.imap(_work, range(renderer.nf), chunksize=4)):
+        ff.stdin.write(fr.tobytes())
+        if progress and (i % 30 == 0 or i == renderer.nf - 1):
+          print(f"\r  rendering frame {i + 1}/{renderer.nf}", end="", file=sys.stderr, flush=True)
+  finally:
+    if payload_path is not None:
+      try:
+        os.unlink(payload_path)
+      except OSError:
+        pass
   ff.stdin.close(); ff.wait()
   if progress:
     print(file=sys.stderr)
