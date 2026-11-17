@@ -41,6 +41,7 @@ schemas are bundled). Location/GPS data in the logs is never read.
 
 ## Contents
 
+- [Supported versions](#supported-versions)
 1. [Install](#1-install)
 2. [Get your rlogs](#2-get-your-rlogs)
 3. [Find interesting moments](#3-find-interesting-moments)
@@ -54,6 +55,28 @@ schemas are bundled). Location/GPS data in the logs is never read.
 11. [Licenses and credits](#11-licenses-and-credits)
 
 ---
+
+## Supported versions
+
+Driver-Mover reads driver-monitoring rlogs from **openpilot 0.9.7 through the current
+release (0.11.2 as of 17 November 2026)**: 0.9.8, 0.9.9, all 0.10.x and all 0.11.x.
+It sniffs `initData.version` from the log and loads a matching bundled cereal pack.
+BogPilot and FrogPilot logs of that age are included. Newer logs whose
+driver-monitoring structs still match 0.11.2 (as they do on commaai/openpilot master
+as of that date) use the same pack. The full table, file layouts and detection rules
+are in [docs/MULTI_VERSION_SUPPORT.md](docs/MULTI_VERSION_SUPPORT.md).
+
+| openpilot version | How it was checked |
+|---|---|
+| 0.9.7 | Real rlogs and unit tests |
+| 0.9.8, 0.9.9, all 0.10.x, 0.11.0, 0.11.1 | Schema and unit tests only |
+| 0.11.2 (current release) | Real rlogs and unit tests |
+| Newer than 0.11.2, if the DM structs still match | Schema only (openpilot master as of 17 November 2026) |
+
+0.11.1 rewrote `DriverMonitoringState` and moved it to a new event slot. Driver-Mover
+normalizes that payload, so the overlay sees the same awareness, distraction and pose
+fields as on older logs. You do not need `--schema-dir` for stock openpilot or for
+BogPilot / FrogPilot logs in this range.
 
 ## 1. Install
 
@@ -105,9 +128,18 @@ The command is `drivermover`; `dmoverlay` is an alias for the same thing.
 
 ## 2. Get your rlogs
 
-A drive (“route”) is split into ~1-minute **segments**. Each segment folder holds an `rlog` file (newer
-versions: `rlog.zst`; uploaded copies: `rlog.bz2` or `rlog.zst`). Driver-Mover needs **rlogs**
-(full logs) — `qlog`s are too sparse. Segment folders look like
+A drive (“route”) is split into ~1-minute **segments**. Driver-Mover needs **rlogs**
+(full logs) — `qlog`s are too sparse. These file names and folder layouts are all accepted:
+
+* `rlog` (uncompressed, typically 0.9.7)
+* `rlog.bz2` / `raw_log.bz2` (0.9.7-era and uploaded copies)
+* `rlog.zst` (0.9.8 and later)
+* segment folders named `<route>--<N>/` (date-style or hash-style)
+* connect-style flat names: `<route>--<N>--rlog.zst`
+* numeric segment folders: `<route>/<N>/rlog.zst`
+
+The openpilot version is detected automatically (see [Supported versions](#supported-versions)).
+Segment folders look like
 
 ```
 0000abcd--0123456789--0
@@ -172,14 +204,17 @@ device shows *Uploads Accepted*. useradmin also lists routes and download links 
 ### (c) Forks (BogPilot, FrogPilot, sunnypilot, …)
 
 * Logs are stored in the same place (`/data/media/0/realdata/`) and the same way on forks.
-* The bundled log schema is BogPilot's (a FrogPilot-based fork). It also reads stock openpilot and
-  FrogPilot logs of a similar age. If you get schema errors with another fork, point Driver-Mover at that
-  fork's own `cereal/` folder: `--schema-dir /path/to/that-fork/cereal`.
-* Some forks rename or move messages (e.g. newer openpilot moved alert text from `controlsState` to
-  `selfdriveState`); missing optional messages just leave that part of the HUD empty.
+* Driver-Mover auto-detects the openpilot version and loads a matching schema pack
+  (0.9.7 through 0.11.2; see [Supported versions](#supported-versions)). The original
+  bundled schema is BogPilot's (a FrogPilot-based fork) and is used for 0.9.7-era logs.
+  If you get schema errors with another fork, point Driver-Mover at that fork's own
+  `cereal/` folder: `--schema-dir /path/to/that-fork/cereal`.
+* Some forks rename or move messages (e.g. newer openpilot moved alert text from
+  `controlsState` to `selfdriveState`); missing optional messages just leave that part
+  of the HUD empty. The 0.11.1 rewrite of `driverMonitoringState` is handled automatically.
 
 You can pass Driver-Mover the **route folder**, single **segment folders**, or individual
-`rlog` / `rlog.zst` / `rlog.bz2` files.
+`rlog` / `rlog.zst` / `rlog.bz2` / `raw_log.bz2` files.
 
 ---
 
@@ -420,9 +455,9 @@ The anchoring offsets (face box, head crop, protected zone) were derived on the 
 | `ffmpeg not found` | Linux `sudo apt install ffmpeg`, macOS `brew install ffmpeg` |
 | `mediapipe could not start … libGLESv2` (Linux) | `sudo apt install libgles2 libegl1` |
 | `pip install` fails building pycapnp / mediapipe | use Python 3.10–3.13 (`python3 --version`), `pip install --upgrade pip` |
-| `no rlog / rlog.zst / rlog.bz2 files found` | point at the folder *containing* the `…--0`, `…--1` folders, or at the files; keep `--N` in file names |
-| schema / “Not a valid capnp” errors | logs from a different fork: `--schema-dir /path/to/fork/cereal` |
-| `no driverStateV2 / driverMonitoringState messages` | you gave it qlogs, or DM wasn't running — use rlogs |
+| `no rlog / rlog.zst / rlog.bz2 files found` | point at the folder *containing* the `…--0`, `…--1` folders, or at the files; keep `--N` in file names; `raw_log.bz2` and numeric `<route>/<N>/` folders are also accepted |
+| schema / “Not a valid capnp” errors | stock 0.9.7–0.11.2 and BogPilot / FrogPilot logs of that age are auto-detected; for another fork use `--schema-dir /path/to/fork/cereal` |
+| `no driverStateV2 / driverMonitoringState messages` | you gave it qlogs, or DM wasn't running — use rlogs. 0.11.1+ logs that used to hit this (rewritten `driverMonitoringState`) are now supported. |
 | many `W0000 …` / `INFO: Created TensorFlow Lite …` lines | harmless MediaPipe messages |
 | realistic head: “skipping …: too few matching features” | regenerate that keyframe closer to the original framing |
 | realistic head looks pasted or turns the wrong way | check the `_keyframes.png` sheet; remove bad keyframes |
@@ -441,11 +476,13 @@ Driver-Mover/
 ├── README.md  LICENSE  THIRD_PARTY_NOTICES.md  pyproject.toml
 ├── tests/                   pytest (python -m pytest tests; no rlogs needed)
 ├── tools/build_hands.py     rebuilds examples/mannequin/hands/ (optional LaMa inpainting)
+├── docs/MULTI_VERSION_SUPPORT.md  which openpilot versions and file layouts are supported
 ├── docs/example_hands_override.{mp4,gif}  the v2 example above
 ├── docs/example_mirror_checks.{mp4,gif}   the v1 (head-only) example
 └── src/drivermover/
     ├── cli.py         `drivermover` command (find / render / calibrate)
-    ├── logreader.py   finds segments, decompresses .zst/.bz2, reads with the bundled schemas
+    ├── schema_packs.py  sniffs initData.version and selects one cereal pack
+    ├── logreader.py   finds segments, decompresses .zst/.bz2, reads with the selected pack
     ├── data.py        log messages → timelines (head angles, awareness, alerts, speed)
     ├── find.py        scores windows for `find` / auto-pick
     ├── config.py      photo settings (JSON) and face-anchor geometry
@@ -455,6 +492,7 @@ Driver-Mover/
     ├── wheel.py       steering wheel: rim ellipse, wheel-plane rotation, spokes, auto calibration
     ├── hands.py       moving hands: layered plate/arms/spokes/hands, 2-bone skinning, push-pull grip planner
     ├── schema/        cereal log schemas (MIT, comma.ai — via BogPilot)
+    ├── schema/packs/  stock packs for 0.9.7 and 0.11.2 (0.9.8–0.11.1 use the 0.11.2 pack)
     ├── fonts/         Inter (SIL OFL 1.1)
     ├── models/        MediaPipe face landmarker (Apache-2.0)
     └── examples/mannequin/  example photo, settings, keyframes and hands/ (layers + rig for --hands)
